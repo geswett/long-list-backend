@@ -1,0 +1,16 @@
+{
+  "name": "puelche-long-list-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend de Long List (Puelche) para desplegar en Render.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
