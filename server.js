@@ -50,7 +50,11 @@ app.use((req, res, next) => {
 
 // ---------- Teamtailor ----------
 
-async function ttFetch(path) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function ttFetch(path, attempt = 1) {
   const base = env.TEAMTAILOR_BASE_URL || "https://api.teamtailor.com";
   const url = path.startsWith("http") ? path : `${base}/v1${path}`;
   const res = await fetch(url, {
@@ -60,6 +64,17 @@ async function ttFetch(path) {
       Accept: "application/vnd.api+json",
     },
   });
+
+  // Teamtailor limita a 50 pedidos cada 10 segundos. Si nos pasamos,
+  // esperamos lo que indique X-Rate-Limit-Reset (o 3s por defecto) y
+  // reintentamos, hasta 5 veces, en vez de romper toda la generación.
+  if (res.status === 429 && attempt <= 5) {
+    const resetSeconds = Number(res.headers.get("x-rate-limit-reset")) || 3;
+    console.log(`[teamtailor] 429 en ${url}, esperando ${resetSeconds}s (intento ${attempt}/5)`);
+    await sleep((resetSeconds + 0.5) * 1000);
+    return ttFetch(path, attempt + 1);
+  }
+
   if (!res.ok) {
     const body = await res.text();
     console.log(`[teamtailor] ERROR ${url} -> ${res.status}: ${body.slice(0, 500)}`);
@@ -173,21 +188,26 @@ async function getCandidateDetails(candidateId) {
   };
 }
 
+// Las preguntas de un proceso se repiten para cada candidato -- las
+// cacheamos en memoria para no volver a pedirlas y no gastar el límite de
+// pedidos de Teamtailor de forma innecesaria.
+const questionTitleCache = new Map();
+
 async function resolveQuestionTitles(answers) {
   const ids = [...new Set(answers.map((a) => a.questionRel && a.questionRel.id).filter(Boolean))];
-  const titles = {};
-  await Promise.all(
-    ids.map(async (id) => {
-      try {
-        const data = await ttFetch(`/questions/${id}`);
-        titles[id] = data.data.attributes.title || data.data.attributes.body;
-      } catch (e) {
-        titles[id] = null;
-      }
-    })
-  );
+  // Uno por uno (no en paralelo) para no disparar ráfagas que gatillen el
+  // rate limit de Teamtailor; los ya cacheados no generan ningún pedido.
+  for (const id of ids) {
+    if (questionTitleCache.has(id)) continue;
+    try {
+      const data = await ttFetch(`/questions/${id}`);
+      questionTitleCache.set(id, data.data.attributes.title || data.data.attributes.body);
+    } catch (e) {
+      questionTitleCache.set(id, null);
+    }
+  }
   return answers.map((a) => ({
-    question: a.questionRel ? titles[a.questionRel.id] : null,
+    question: a.questionRel ? questionTitleCache.get(a.questionRel.id) : null,
     value: a.value,
   }));
 }
