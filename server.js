@@ -252,7 +252,10 @@ Responde SOLO con un JSON array de strings, en el mismo orden que "index", donde
     },
     body: JSON.stringify({
       model: env.ANTHROPIC_MODEL || "claude-sonnet-5",
-      max_tokens: 4000,
+      // Este modelo puede usar tokens de "pensamiento" antes de escribir la
+      // respuesta final; con poco margen se queda sin espacio y corta antes
+      // de llegar al texto. Le damos bastante lugar de sobra.
+      max_tokens: 16000,
       messages: [{ role: "user", content: prompt }],
     }),
   });
