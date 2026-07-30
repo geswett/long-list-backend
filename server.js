@@ -226,22 +226,21 @@ async function draftResumenes(candidates, jobLocationHint) {
 
   const prompt = `Hoy es ${today}. El cargo al que postulan estos candidatos está ubicado en/alrededor de: "${jobLocationHint || "no especificado"}".
 
-Para cada candidato en el siguiente JSON, redacta el "resumen laboral" en español siguiendo EXACTAMENTE este estilo (oraciones cortas separadas por punto, en este orden):
-1. Cargo actual y empresa (del CV).
-2. Título profesional o grado más alto y universidad; si hay 1-2 diplomados/certificaciones relevantes, agrégalos como oraciones cortas propias.
-3. "Tiene [edad] años, vive en [ciudad]." -- calcula la edad a partir de la fecha de nacimiento en las respuestas, usando la fecha de hoy. Si la ciudad del candidato es distinta a la del cargo, o alguna respuesta indica disponibilidad para trasladarse/trabajar presencialmente en la zona del cargo, agrega "con disponibilidad a traslado" en esa misma oración.
-4. "Exp. de renta preliminar $[monto con separador de miles] liq." usando la renta esperada líquida de las respuestas. Si no existe ese dato, omite esta oración.
+Para cada candidato en el siguiente JSON, redacta el "resumen laboral" en español. Va DENTRO DE UNA SOLA CELDA de una planilla, pero con 3 líneas separadas por saltos de línea reales (\\n dentro del string), en este orden exacto:
 
-No inventes datos que no estén en el CV o las respuestas: si falta un dato, arma la oración con lo que sí hay y omite lo que falta.
+Línea 1: Cargo actual y empresa (del CV). Título profesional o grado más alto y universidad. Si hay 1-2 diplomados/certificaciones relevantes, agrégalos como oraciones cortas propias, todo en esta misma línea.
+Línea 2: "Tiene [edad] años, vive en [ciudad]." -- calcula la edad a partir de la fecha de nacimiento en las respuestas, usando la fecha de hoy. Si la ciudad del candidato es distinta a la del cargo, o alguna respuesta indica disponibilidad para trasladarse/trabajar presencialmente en la zona del cargo, agrega "con disponibilidad a traslado" en esa misma línea.
+Línea 3: "Exp. de renta preliminar $[monto con separador de miles] liq." usando la renta esperada líquida de las respuestas. Si no existe ese dato, omite esta línea completa.
 
-Ejemplos de estilo (solo para calibrar tono, no copiar contenido):
-"Subgerente de producción, FLEX. Ingeniero Civil Industrial, Universidad Técnica Federico Santa María. Diplomado en Gestión de Recursos Humanos, Universidad Católica de Temuco. Tiene 40 años, vive en Santiago. Exp. de renta preliminar $6.000.000 liq."
-"Ex-Gerente de Operaciones Yadrán. Ingeniero Civil Industrial, Universidad de Concepción. MBA, Universidad de Concepción/Wright State University, Ohio. Tiene 49 años, vive en Puerto Varas con disponibilidad a traslado. Exp. de renta preliminar $7.000.000 liq."
+No inventes datos que no estén en el CV o las respuestas: si falta un dato, arma la línea con lo que sí hay y omite lo que falta.
+
+Ejemplo de estilo y formato exacto (solo para calibrar tono y estructura, no copiar contenido; noten los saltos de línea entre cada parte):
+"Subgerente de producción, FLEX. Ingeniero Civil Industrial, Universidad Técnica Federico Santa María. Diplomado en Gestión de Recursos Humanos, Universidad Católica de Temuco. Diplomado en Gestión de operaciones y logística, Universidad de Chile.\\nTiene 40 años, vive en Santiago.\\nExp. de renta preliminar $6.000.000 liq."
 
 Candidatos (JSON):
 ${JSON.stringify(payload, null, 2)}
 
-Responde SOLO con un JSON array de strings, en el mismo orden que "index", donde cada string es el resumen de ese candidato. No agregues explicación ni markdown, solo el array JSON.`;
+Responde SOLO con un JSON array de strings, en el mismo orden que "index", donde cada string es el resumen de ese candidato (con los \\n reales dentro del string, como en el ejemplo). No agregues explicación ni markdown, solo el array JSON.`;
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -343,35 +342,114 @@ async function createLongListSheet(title, candidates) {
     }
   );
 
+  // Colores y fuente sacados directamente de la planilla de ejemplo real
+  // (Long List.xlsx) para que quede igual: gris de encabezados 999999,
+  // texto del nombre en un teal 467886, fuente Montserrat en todo.
+  const GRAY = "999999";
+  const NAME_TEAL = "467886";
+  const FONT = "Montserrat";
+  const lastRow = values.length; // 1-indexed count == exclusive end index para rango 0-indexado
+
   const requests = [
-    { mergeCells: { range: rng(sheetId, 1, 2, 0, 5), mergeType: "MERGE_ALL" } },
-    { mergeCells: { range: rng(sheetId, 2, 3, 1, 5), mergeType: "MERGE_ALL" } },
+    { mergeCells: { range: rng(sheetId, 1, 2, 0, 5), mergeType: "MERGE_ALL" } }, // A2:E2 título
+    { mergeCells: { range: rng(sheetId, 2, 3, 1, 5), mergeType: "MERGE_ALL" } }, // B3:E3 subtítulo
+
+    // Título (fila 2): negrita, sin relleno, centrado
     {
       repeatCell: {
         range: rng(sheetId, 1, 2, 0, 5),
-        cell: { userEnteredFormat: { backgroundColor: hex("1F2937"), textFormat: { bold: true, fontSize: 14, foregroundColor: hex("FFFFFF") } } },
-        fields: "userEnteredFormat(backgroundColor,textFormat)",
+        cell: {
+          userEnteredFormat: {
+            textFormat: { bold: true, fontSize: 11, fontFamily: FONT },
+            horizontalAlignment: "CENTER",
+            verticalAlignment: "MIDDLE",
+          },
+        },
+        fields: "userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment)",
       },
     },
+    // Subtítulo + fila de encabezados (filas 3 y 4, columnas B:E): blanco negrita sobre gris
     {
       repeatCell: {
         range: rng(sheetId, 2, 4, 1, 5),
-        cell: { userEnteredFormat: { backgroundColor: hex("374151"), textFormat: { bold: true, foregroundColor: hex("FFFFFF") }, horizontalAlignment: "CENTER" } },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: hex(GRAY),
+            textFormat: { bold: true, fontSize: 11, fontFamily: FONT, foregroundColor: hex("FFFFFF") },
+            horizontalAlignment: "CENTER",
+            verticalAlignment: "MIDDLE",
+          },
+        },
+        fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)",
+      },
+    },
+    // Filas de datos (desde la 5): fuente, wrap y centrado vertical por defecto
+    {
+      repeatCell: {
+        range: rng(sheetId, 4, lastRow, 1, 5),
+        cell: {
+          userEnteredFormat: {
+            textFormat: { fontSize: 11, fontFamily: FONT },
+            wrapStrategy: "WRAP",
+            verticalAlignment: "MIDDLE",
+          },
+        },
+        fields: "userEnteredFormat(textFormat,wrapStrategy,verticalAlignment)",
+      },
+    },
+    // Columna B (numeración): centrada horizontal también
+    {
+      repeatCell: {
+        range: rng(sheetId, 4, lastRow, 1, 2),
+        cell: { userEnteredFormat: { horizontalAlignment: "CENTER" } },
+        fields: "userEnteredFormat(horizontalAlignment)",
+      },
+    },
+    // Columna C (nombre): color teal como en la plantilla
+    {
+      repeatCell: {
+        range: rng(sheetId, 4, lastRow, 2, 3),
+        cell: { userEnteredFormat: { textFormat: { fontSize: 11, fontFamily: FONT, foregroundColor: hex(NAME_TEAL) } } },
+        fields: "userEnteredFormat.textFormat",
+      },
+    },
+    // Columna E (status): negrita y fondo blanco explícito, centrada
+    {
+      repeatCell: {
+        range: rng(sheetId, 4, lastRow, 4, 5),
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: hex("FFFFFF"),
+            textFormat: { bold: true, fontSize: 11, fontFamily: FONT },
+            horizontalAlignment: "CENTER",
+          },
+        },
         fields: "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)",
       },
     },
+    // Bordes finos en toda la tabla (B3:E-última fila), como en la plantilla
     {
-      repeatCell: {
-        range: rng(sheetId, 4, values.length, 0, 5),
-        cell: { userEnteredFormat: { wrapStrategy: "WRAP", verticalAlignment: "TOP" } },
-        fields: "userEnteredFormat(wrapStrategy,verticalAlignment)",
+      updateBorders: {
+        range: rng(sheetId, 2, lastRow, 1, 5),
+        top: { style: "SOLID", width: 1, color: hex("000000") },
+        bottom: { style: "SOLID", width: 1, color: hex("000000") },
+        left: { style: "SOLID", width: 1, color: hex("000000") },
+        right: { style: "SOLID", width: 1, color: hex("000000") },
+        innerHorizontal: { style: "SOLID", width: 1, color: hex("000000") },
+        innerVertical: { style: "SOLID", width: 1, color: hex("000000") },
       },
     },
-    { updateDimensionProperties: { range: colRng(sheetId, 0, 1), properties: { pixelSize: 30 }, fields: "pixelSize" } },
+    // Anchos de columna calcados de la planilla original
+    { updateDimensionProperties: { range: colRng(sheetId, 0, 1), properties: { pixelSize: 44 }, fields: "pixelSize" } },
     { updateDimensionProperties: { range: colRng(sheetId, 1, 2), properties: { pixelSize: 40 }, fields: "pixelSize" } },
-    { updateDimensionProperties: { range: colRng(sheetId, 2, 3), properties: { pixelSize: 200 }, fields: "pixelSize" } },
-    { updateDimensionProperties: { range: colRng(sheetId, 3, 4), properties: { pixelSize: 550 }, fields: "pixelSize" } },
-    { updateDimensionProperties: { range: colRng(sheetId, 4, 5), properties: { pixelSize: 180 }, fields: "pixelSize" } },
+    { updateDimensionProperties: { range: colRng(sheetId, 2, 3), properties: { pixelSize: 191 }, fields: "pixelSize" } },
+    { updateDimensionProperties: { range: colRng(sheetId, 3, 4), properties: { pixelSize: 577 }, fields: "pixelSize" } },
+    { updateDimensionProperties: { range: colRng(sheetId, 4, 5), properties: { pixelSize: 496 }, fields: "pixelSize" } },
+    // Altura fija para título/subtítulo/encabezado; las filas de datos se
+    // autoajustan según el largo real del resumen de cada candidato.
+    { updateDimensionProperties: { range: { sheetId, dimension: "ROWS", startIndex: 1, endIndex: 2 }, properties: { pixelSize: 83 }, fields: "pixelSize" } },
+    { updateDimensionProperties: { range: { sheetId, dimension: "ROWS", startIndex: 2, endIndex: 4 }, properties: { pixelSize: 48 }, fields: "pixelSize" } },
+    { autoResizeDimensions: { dimensions: { sheetId, dimension: "ROWS", startIndex: 4, endIndex: lastRow } } },
   ];
 
   await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
