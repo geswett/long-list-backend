@@ -89,25 +89,20 @@ async function ttFetchAllPages(path) {
 }
 
 async function listOpenJobs() {
-  const data = await ttFetch("/jobs?filter[status]=open&page[size]=30");
-  const jobs = (data.data || []).map((j) => ({
+  // El filtro de Teamtailor filter[status]=open no anduvo de forma confiable
+  // con este token, así que traemos todos los procesos (paginando) y
+  // filtramos nosotros mismos por status === "open".
+  const all = await ttFetchAllPages("/jobs");
+  const openOnes = all.filter((j) => j.attributes && j.attributes.status === "open");
+  const jobs = openOnes.map((j) => ({
     id: j.id,
     title: j.attributes["internal-name"] || j.attributes.title,
   }));
 
-  // Diagnóstico: si el filtro por "open" no trajo nada, probamos sin filtro
-  // para ver si el problema es el filtro o la conexión/token en sí.
-  let debug = null;
-  if (jobs.length === 0) {
-    const unfiltered = await ttFetch("/jobs?page[size]=5");
-    debug = {
-      filteredCount: jobs.length,
-      unfilteredCount: (unfiltered.data || []).length,
-      unfilteredMeta: unfiltered.meta,
-      sampleStatuses: (unfiltered.data || []).map((j) => j.attributes && j.attributes.status),
-    };
-    console.log(`[diagnostico] /api/jobs vino vacío. ${JSON.stringify(debug)}`);
-  }
+  const debug =
+    jobs.length === 0
+      ? { totalJobsVistos: all.length, statusesVistos: [...new Set(all.map((j) => j.attributes && j.attributes.status))] }
+      : null;
 
   return { jobs, debug };
 }
