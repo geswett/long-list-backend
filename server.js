@@ -262,7 +262,15 @@ Responde SOLO con un JSON array de strings, en el mismo orden que "index", donde
     throw new Error(`Anthropic API -> ${res.status}: ${body.slice(0, 500)}`);
   }
   const data = await res.json();
-  const text = data.content && data.content[0] && data.content[0].text;
+  // Buscamos el primer bloque de tipo "text": si el modelo usa thinking
+  // extendido, ese bloque puede no ser el [0], así que no asumimos la
+  // posición.
+  const textBlock = (data.content || []).find((b) => b && b.type === "text" && typeof b.text === "string");
+  const text = textBlock && textBlock.text;
+  if (!text) {
+    console.log(`[anthropic] respuesta sin bloque de texto: ${JSON.stringify(data).slice(0, 800)}`);
+    throw new Error("Anthropic no devolvió texto utilizable (revisá los logs de Render para ver la respuesta completa).");
+  }
   const match = text.match(/\[[\s\S]*\]/);
   return JSON.parse(match ? match[0] : text);
 }
