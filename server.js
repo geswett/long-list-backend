@@ -62,9 +62,14 @@ async function ttFetch(path) {
   });
   if (!res.ok) {
     const body = await res.text();
+    console.log(`[teamtailor] ERROR ${url} -> ${res.status}: ${body.slice(0, 500)}`);
     throw new Error(`Teamtailor ${url} -> ${res.status}: ${body.slice(0, 500)}`);
   }
-  return res.json();
+  const json = await res.json();
+  console.log(
+    `[teamtailor] OK ${url} -> ${res.status}, data.length=${(json.data || []).length}, meta=${JSON.stringify(json.meta || {})}`
+  );
+  return json;
 }
 
 /** Trae TODAS las páginas de un listado de Teamtailor (usa meta.page-count). */
@@ -85,10 +90,26 @@ async function ttFetchAllPages(path) {
 
 async function listOpenJobs() {
   const data = await ttFetch("/jobs?filter[status]=open&page[size]=30");
-  return (data.data || []).map((j) => ({
+  const jobs = (data.data || []).map((j) => ({
     id: j.id,
     title: j.attributes["internal-name"] || j.attributes.title,
   }));
+
+  // Diagnóstico: si el filtro por "open" no trajo nada, probamos sin filtro
+  // para ver si el problema es el filtro o la conexión/token en sí.
+  let debug = null;
+  if (jobs.length === 0) {
+    const unfiltered = await ttFetch("/jobs?page[size]=5");
+    debug = {
+      filteredCount: jobs.length,
+      unfilteredCount: (unfiltered.data || []).length,
+      unfilteredMeta: unfiltered.meta,
+      sampleStatuses: (unfiltered.data || []).map((j) => j.attributes && j.attributes.status),
+    };
+    console.log(`[diagnostico] /api/jobs vino vacío. ${JSON.stringify(debug)}`);
+  }
+
+  return { jobs, debug };
 }
 
 async function getJob(jobId) {
@@ -331,7 +352,8 @@ app.get("/", (req, res) => res.json({ ok: true, service: "long-list-backend" }))
 
 app.get("/api/jobs", async (req, res) => {
   try {
-    res.json({ jobs: await listOpenJobs() });
+    const { jobs, debug } = await listOpenJobs();
+    res.json({ jobs, debug });
   } catch (err) {
     res.status(500).json({ error: String(err.message || err) });
   }
