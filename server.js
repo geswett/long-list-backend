@@ -140,7 +140,18 @@ async function getCandidateDetails(candidateId) {
   const attrs = data.data.attributes;
   const name = `${attrs["first-name"] || ""} ${attrs["last-name"] || ""}`.trim();
 
-  const answersRaw = await ttFetchAllPages(`/answers?filter[candidate]=${candidateId}&include=question`);
+  // Teamtailor no permite filter[candidate] sobre /v1/answers ("Filter not
+  // allowed"). En cambio, sí expone las respuestas de un candidato a través
+  // de la ruta de relación estándar de JSON:API /v1/candidates/:id/answers.
+  // Si por algún motivo esa ruta no existiera para esta cuenta, probamos
+  // como respaldo el filtro viejo (algunas cuentas/tokens sí lo permiten).
+  let answersRaw;
+  try {
+    answersRaw = await ttFetchAllPages(`/candidates/${candidateId}/answers?include=question`);
+  } catch (e) {
+    console.log(`[respuesta candidato ${candidateId}] ruta de relación falló (${e.message}), probando filtro clásico...`);
+    answersRaw = await ttFetchAllPages(`/answers?filter[candidate]=${candidateId}&include=question`);
+  }
   const answers = answersRaw.map((a) => {
     const val =
       a.attributes.text ??
