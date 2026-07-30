@@ -445,6 +445,23 @@ async function createLongListSheet(title, candidates) {
     body: JSON.stringify({ requests }),
   });
 
+  // Compartir como "cualquiera con el link puede editar" (para que el equipo
+  // pueda completar la columna de status sin tener que pedir acceso uno por
+  // uno). Esto usa la API de Drive, no la de Sheets, así que el token de
+  // Google necesita el scope de Drive (ver GOOGLE_REFRESH_TOKEN en el DEPLOY).
+  const shareRes = await fetch(`https://www.googleapis.com/drive/v3/files/${spreadsheetId}/permissions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ role: "writer", type: "anyone" }),
+  });
+  if (!shareRes.ok) {
+    const body = await shareRes.text();
+    console.log(`[drive] no se pudo compartir el sheet como público: ${shareRes.status} ${body.slice(0, 500)}`);
+    // No cortamos la generación por esto: el sheet ya existe y tiene los
+    // datos, solo queda restringido a la cuenta dueña hasta que se
+    // resuelva el permiso (normalmente falta el scope de Drive en el token).
+  }
+
   return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
 }
 
