@@ -12,10 +12,7 @@
  *   GET  /api/jobs/:id/stages       -> etapas del pipeline de ese proceso
  *   POST /api/generate              -> arma el Long List y lo sube a Google Sheets
  *
- * Todas las rutas requieren el header `x-access-key` con el valor de la
- * variable de entorno ACCESS_PASSWORD (una clave compartida simple, no es
- * un login individual, pero evita que cualquiera con el link use la
- * herramienta).
+ * Sin clave de acceso: cualquiera con el link de la página puede usarla.
  *
  * Requiere Node 18 o superior (usa el fetch global de Node, sin dependencias
  * extra salvo Express para las rutas).
@@ -26,10 +23,10 @@ const express = require("express");
 const app = express();
 app.use(express.json());
 
-// CORS abierto (protegido igual por la clave de acceso).
+// CORS abierto.
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Headers", "Content-Type, x-access-key");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
@@ -37,16 +34,6 @@ app.use((req, res, next) => {
 
 const TEAMTAILOR_API_VERSION = "20240904";
 const env = process.env; // todas las claves viven en las Environment Variables de Render
-
-function checkAccess(req) {
-  if (!env.ACCESS_PASSWORD) return true; // si no se configuró, no bloquea (no recomendado)
-  return (req.header("x-access-key") || "") === env.ACCESS_PASSWORD;
-}
-
-app.use((req, res, next) => {
-  if (!checkAccess(req)) return res.status(401).json({ error: "Clave de acceso inválida." });
-  next();
-});
 
 // ---------- Teamtailor ----------
 
