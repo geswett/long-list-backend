@@ -186,17 +186,36 @@ async function getCandidateDetails(candidateId) {
     console.log(`[respuesta candidato ${candidateId}] ruta de relación falló (${e.message}), probando filtro clásico...`);
     answersRaw = await ttFetchAllPages(`/answers?filter[candidate]=${candidateId}&include=question`);
   }
+  // Según el tipo de pregunta (texto, fecha, numérica, choice, etc.),
+  // Teamtailor guarda la respuesta en un atributo distinto ("text", "date",
+  // "number", "range", "choices", ...). En vez de listar a mano los que
+  // conocemos (lo que nos hizo perder fecha de nacimiento y renta esperada,
+  // que vienen como "date" y "number"), tomamos el primer atributo con
+  // contenido real, ignorando los metadatos técnicos.
+  const ANSWER_METADATA_FIELDS = new Set(["created-at", "updated-at"]);
   const answers = answersRaw.map((a) => {
-    const val =
-      a.attributes.text ??
-      (a.attributes.boolean === null ? null : a.attributes.boolean) ??
-      a.attributes.range ??
-      (a.attributes.choices && a.attributes.choices.length ? a.attributes.choices : null);
+    let val = null;
+    for (const [key, v] of Object.entries(a.attributes || {})) {
+      if (ANSWER_METADATA_FIELDS.has(key)) continue;
+      if (v === null || v === undefined) continue;
+      if (Array.isArray(v) && v.length === 0) continue;
+      val = v;
+      break;
+    }
     return {
       value: val,
       questionRel: a.relationships && a.relationships.question && a.relationships.question.data,
     };
   });
+
+  // Diagnóstico único: si la primera respuesta del candidato quedó sin
+  // valor, dejamos sus atributos crudos en el log para poder ajustar la
+  // lista de campos si hiciera falta.
+  if (answersRaw[0] && (answers[0].value === null || answers[0].value === undefined)) {
+    console.log(
+      `[respuestas candidato ${candidateId}] no se encontró valor utilizable. attributes de ejemplo: ${JSON.stringify(answersRaw[0].attributes)}`
+    );
+  }
 
   return {
     id: candidateId,
