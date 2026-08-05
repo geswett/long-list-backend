@@ -11,6 +11,8 @@
     "node": ">=18"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "mammoth": "^1.8.0",
+    "pdf-parse": "^1.1.1"
   }
 }
