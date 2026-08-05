@@ -127,11 +127,43 @@ async function getStages(jobId) {
   }));
 }
 
+// Teamtailor devuelve, para un mismo filtro de etapa, tanto postulaciones activas
+// como rechazadas (el rechazo no las saca de la relación "stage", queda como un
+// estado aparte). Hay que filtrar los rechazados a mano.
+function isRejectedApplication(r) {
+  const attrs = r.attributes || {};
+  const status = String(attrs.status || attrs.state || "").toLowerCase();
+  if (status === "rejected") return true;
+  if (attrs["rejected-at"]) return true;
+  if (attrs.rejected === true) return true;
+  return false;
+}
+
 async function getApplicationsInStage(jobId, stageId) {
   const rows = await ttFetchAllPages(
     `/job-applications?filter[job]=${jobId}&filter[stage]=${stageId}&include=candidate`
   );
-  return rows.map((r) => ({
+
+  // Diagnóstico único: si ningún campo conocido está presente, lo dejamos en el
+  // log para poder ajustar isRejectedApplication con el nombre real del campo.
+  const sample = rows[0];
+  if (sample) {
+    const attrs = sample.attributes || {};
+    const knownFields = ["status", "state", "rejected-at", "rejected"];
+    const hasKnownField = knownFields.some((f) => attrs[f] !== undefined);
+    if (!hasKnownField) {
+      console.log(
+        `[job-applications] no se encontró ningún campo conocido de rechazo. attributes de ejemplo: ${JSON.stringify(attrs)}`
+      );
+    }
+  }
+
+  const active = rows.filter((r) => !isRejectedApplication(r));
+  console.log(
+    `[job-applications] etapa ${stageId}: ${rows.length} postulaciones totales, ${active.length} activas (excluidas ${rows.length - active.length} rechazadas)`
+  );
+
+  return active.map((r) => ({
     applicationId: r.id,
     candidateId: r.relationships.candidate.data.id,
   }));
