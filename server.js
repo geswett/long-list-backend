@@ -20,6 +20,23 @@
 
 const express = require("express");
 
+// Extracción de texto de CVs originales (respaldo cuando el resumen que
+// generó Teamtailor viene muy corto). Estas dos dependencias son opcionales
+// a propósito: si por algún motivo no se instalaron bien, el resto del
+// servidor sigue funcionando igual, solo sin este respaldo.
+let pdfParse = null;
+let mammoth = null;
+try {
+  pdfParse = require("pdf-parse");
+} catch (e) {
+  console.log("[cv] pdf-parse no disponible, no se podrán leer CVs en PDF como respaldo");
+}
+try {
+  mammoth = require("mammoth");
+} catch (e) {
+  console.log("[cv] mammoth no disponible, no se podrán leer CVs en Word como respaldo");
+}
+
 const app = express();
 app.use(express.json());
 
@@ -169,6 +186,101 @@ async function getApplicationsInStage(jobId, stageId) {
   }));
 }
 
+// Si el "resume-summary" que generó la IA de Teamtailor viene muy corto (le
+// puede pasar con algunos CVs), lo consideramos insuficiente y probamos
+// bajar el archivo de CV original del candidato para usarlo en su lugar.
+const MIN_SUMMARY_LENGTH = 150;
+
+/** Busca el archivo de CV original de un candidato, siguiendo la relación
+ * "documents" de Teamtailor. Devuelve null si no hay archivo o si algo
+ * falla (nunca tira error hacia arriba: es un respaldo, no algo crítico). */
+async function getCandidateResumeFile(candidateId) {
+  let data;
+  try {
+    data = await ttFetch(`/candidates/${candidateId}?include=documents`);
+  } catch (e) {
+    console.log(`[cv candidato ${candidateId}] no se pudo pedir el candidato con documents: ${e.message}`);
+    return null;
+  }
+
+  let docs = (data.included || []).filter(
+    (r) => r.type === "documents" || r.type === "candidate-documents" || r.type === "resumes"
+  );
+
+  if (!docs.length) {
+    const rel = data.data.relationships || {};
+    const relNames = Object.keys(rel);
+    const docsRel = rel.documents || rel.resumes || rel.files;
+    const relatedUrl = docsRel && docsRel.links && docsRel.links.related;
+    if (!relatedUrl) {
+      console.log(
+        `[cv candidato ${candidateId}] no se encontró relación de documentos. Relaciones disponibles: ${relNames.join(", ")}`
+      );
+      return null;
+    }
+    try {
+      const relPath = relatedUrl.replace(/^https?:\/\/[^/]+\/v1/, "");
+      const relData = await ttFetch(relPath);
+      docs = relData.data || [];
+    } catch (e) {
+      console.log(`[cv candidato ${candidateId}] no se pudo seguir el link de documentos: ${e.message}`);
+      return null;
+    }
+  }
+
+  if (!docs.length) return null;
+  const doc = docs[0];
+  const docAttrs = doc.attributes || {};
+  const url = docAttrs.url || docAttrs["download-url"] || docAttrs["file-url"];
+  if (!url) {
+    console.log(`[cv candidato ${candidateId}] documento sin url descargable. attributes: ${JSON.stringify(docAttrs)}`);
+    return null;
+  }
+
+  try {
+    const fileRes = await fetch(url);
+    if (!fileRes.ok) {
+      console.log(`[cv candidato ${candidateId}] no se pudo descargar el archivo (${fileRes.status})`);
+      return null;
+    }
+    const buffer = Buffer.from(await fileRes.arrayBuffer());
+    return {
+      buffer,
+      filename: docAttrs.filename || docAttrs.name || "cv",
+      contentType: fileRes.headers.get("content-type") || "",
+    };
+  } catch (e) {
+    console.log(`[cv candidato ${candidateId}] error descargando el archivo: ${e.message}`);
+    return null;
+  }
+}
+
+/** Convierte el archivo de CV (PDF o Word) a texto plano. Devuelve null si
+ * no se puede (formato no soportado, o falta la librería correspondiente). */
+async function extractResumeText(file) {
+  const name = (file.filename || "").toLowerCase();
+  try {
+    if ((name.endsWith(".pdf") || file.contentType.includes("pdf")) && pdfParse) {
+      const parsed = await pdfParse(file.buffer);
+      return parsed.text;
+    }
+    if (
+      (name.endsWith(".docx") || file.contentType.includes("wordprocessingml")) &&
+      mammoth
+    ) {
+      const { value } = await mammoth.extractRawText({ buffer: file.buffer });
+      return value;
+    }
+    if (name.endsWith(".txt") || file.contentType.includes("text/plain")) {
+      return file.buffer.toString("utf8");
+    }
+    console.log(`[cv] formato de CV no soportado para extracción: ${file.filename} (${file.contentType})`);
+  } catch (e) {
+    console.log(`[cv] no se pudo extraer texto de ${file.filename}: ${e.message}`);
+  }
+  return null;
+}
+
 async function getCandidateDetails(candidateId) {
   const data = await ttFetch(`/candidates/${candidateId}`);
   const attrs = data.data.attributes;
@@ -217,10 +329,35 @@ async function getCandidateDetails(candidateId) {
     );
   }
 
+  let resumeSummary = attrs["resume-summary"] || "";
+
+  // El resumen que arma la IA de Teamtailor a veces sale muy corto (le pasó
+  // con CVs que no logró parsear bien). En ese caso, probamos bajar el CV
+  // original (PDF o Word) y usar su texto completo en su lugar.
+  if (resumeSummary.trim().length < MIN_SUMMARY_LENGTH) {
+    try {
+      const file = await getCandidateResumeFile(candidateId);
+      if (file) {
+        const text = await extractResumeText(file);
+        if (text && text.trim().length > resumeSummary.trim().length) {
+          // Recortamos por las dudas (CVs muy largos) para no inflar de más
+          // el prompt que le mandamos a Anthropic.
+          const trimmed = text.trim().slice(0, 6000);
+          console.log(
+            `[cv candidato ${candidateId}] resumen de Teamtailor era corto (${resumeSummary.trim().length} caracteres), se usó el CV original en su lugar (${trimmed.length} caracteres, de ${text.trim().length} totales).`
+          );
+          resumeSummary = trimmed;
+        }
+      }
+    } catch (e) {
+      console.log(`[cv candidato ${candidateId}] fallback al CV original falló: ${e.message}`);
+    }
+  }
+
   return {
     id: candidateId,
     name,
-    resumeSummary: attrs["resume-summary"] || "",
+    resumeSummary,
     location: attrs["location"] || "",
     answers,
   };
