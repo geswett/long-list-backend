@@ -561,7 +561,11 @@ async function createLongListSheet(title, candidates) {
       console.log(`[logo] no se pudo habilitar el acceso a URLs externas: ${permRes.status} ${await permRes.text()}`);
     }
 
-    const imageFormula = `=IMAGE("${env.LOGO_URL}", 1)`;
+    // Ojo: la planilla queda en configuración regional español (hereda el
+    // idioma de la cuenta de Google que la crea), y ahí el separador de
+    // argumentos de las funciones es ";" en vez de "," -- con coma tira
+    // "Error de análisis de fórmula" aunque la URL esté perfecta.
+    const imageFormula = `=IMAGE("${env.LOGO_URL}"; 1)`;
     const logoRes = await googleFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1?valueInputOption=USER_ENTERED`,
       {
