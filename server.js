@@ -538,6 +538,29 @@ async function createLongListSheet(title, candidates) {
   // entorno de Render. Si no está configurada, simplemente no se agrega
   // ningún logo (el resto de la planilla sigue generándose igual).
   if (env.LOGO_URL) {
+    // Las planillas creadas por API tienen bloqueado por defecto el acceso a
+    // URLs externas para funciones como IMAGE()/IMPORTDATA() (da #ERROR!
+    // hasta que alguien lo habilita a mano desde la interfaz). Lo habilitamos
+    // nosotros mismos antes de escribir la fórmula, para que funcione desde
+    // el primer momento sin que nadie tenga que aceptar nada manualmente.
+    const permRes = await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requests: [
+          {
+            updateSpreadsheetProperties: {
+              properties: { importFunctionsExternalUrlAccessAllowed: true },
+              fields: "importFunctionsExternalUrlAccessAllowed",
+            },
+          },
+        ],
+      }),
+    });
+    if (!permRes.ok) {
+      console.log(`[logo] no se pudo habilitar el acceso a URLs externas: ${permRes.status} ${await permRes.text()}`);
+    }
+
     const imageFormula = `=IMAGE("${env.LOGO_URL}", 1)`;
     const logoRes = await googleFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1?valueInputOption=USER_ENTERED`,
