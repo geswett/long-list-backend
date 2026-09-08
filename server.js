@@ -473,6 +473,21 @@ async function getGoogleAccessToken() {
   return data.access_token;
 }
 
+/** Envoltorio de fetch para las APIs de Google (Sheets/Drive) con reintentos
+ * ante errores transitorios (503 "service unavailable", 429 rate limit) --
+ * son fallas momentáneas del lado de Google, no un problema nuestro, y
+ * normalmente se resuelven solas si se reintenta a los pocos segundos. */
+async function googleFetch(url, options, attempt = 1) {
+  const res = await fetch(url, options);
+  if ((res.status === 503 || res.status === 429) && attempt <= 3) {
+    const waitMs = attempt * 1500;
+    console.log(`[google] ${res.status} en ${url}, reintentando en ${waitMs}ms (intento ${attempt}/3)`);
+    await sleep(waitMs);
+    return googleFetch(url, options, attempt + 1);
+  }
+  return res;
+}
+
 function rng(sheetId, startRow, endRow, startCol, endCol) {
   return { sheetId, startRowIndex: startRow, endRowIndex: endRow, startColumnIndex: startCol, endColumnIndex: endCol };
 }
@@ -490,7 +505,7 @@ function hex(h) {
 async function createLongListSheet(title, candidates) {
   const accessToken = await getGoogleAccessToken();
 
-  const createRes = await fetch("https://sheets.googleapis.com/v4/spreadsheets", {
+  const createRes = await googleFetch("https://sheets.googleapis.com/v4/spreadsheets", {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ properties: { title }, sheets: [{ properties: { title: "Long List" } }] }),
@@ -508,7 +523,7 @@ async function createLongListSheet(title, candidates) {
     ...candidates.map((c, i) => ["", i + 1, c.name, c.resumen, ""]),
   ];
 
-  await fetch(
+  await googleFetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1:E${values.length}?valueInputOption=RAW`,
     {
       method: "PUT",
@@ -516,6 +531,30 @@ async function createLongListSheet(title, candidates) {
       body: JSON.stringify({ values }),
     }
   );
+
+  // Logo de Puelche arriba a la izquierda, en la fila 1 (que queda en blanco
+  // arriba del título). Se arma con la función =IMAGE() de Sheets, que
+  // necesita una URL pública de la imagen -- LOGO_URL en las variables de
+  // entorno de Render. Si no está configurada, simplemente no se agrega
+  // ningún logo (el resto de la planilla sigue generándose igual).
+  if (env.LOGO_URL) {
+    const imageFormula = `=IMAGE("${env.LOGO_URL}", 1)`;
+    const logoRes = await googleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1?valueInputOption=USER_ENTERED`,
+      {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ values: [[imageFormula]] }),
+      }
+    );
+    if (!logoRes.ok) {
+      console.log(`[logo] no se pudo escribir la fórmula IMAGE en A1: ${logoRes.status} ${await logoRes.text()}`);
+    } else {
+      console.log(`[logo] fórmula IMAGE escrita en A1 con LOGO_URL=${env.LOGO_URL}`);
+    }
+  } else {
+    console.log("[logo] LOGO_URL no está seteada en las variables de entorno -- no se agrega logo.");
+  }
 
   // Colores y fuente sacados directamente de la planilla de ejemplo real
   // (Long List.xlsx) para que quede igual: gris de encabezados 999999,
@@ -627,7 +666,17 @@ async function createLongListSheet(title, candidates) {
     { autoResizeDimensions: { dimensions: { sheetId, dimension: "ROWS", startIndex: 4, endIndex: lastRow } } },
   ];
 
-  await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+  if (env.LOGO_URL) {
+    // Un poco más de alto en la fila 1 y ancho (A1:B1 combinadas) para que
+    // el logo entre bien arriba a la izquierda, sin achicar el resto de la
+    // tabla que arranca en la fila 2.
+    requests.push(
+      { mergeCells: { range: rng(sheetId, 0, 1, 0, 2), mergeType: "MERGE_ALL" } }, // A1:B1
+      { updateDimensionProperties: { range: { sheetId, dimension: "ROWS", startIndex: 0, endIndex: 1 }, properties: { pixelSize: 60 }, fields: "pixelSize" } }
+    );
+  }
+
+  await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ requests }),
@@ -637,7 +686,7 @@ async function createLongListSheet(title, candidates) {
   // pueda completar la columna de status sin tener que pedir acceso uno por
   // uno). Esto usa la API de Drive, no la de Sheets, así que el token de
   // Google necesita el scope de Drive (ver GOOGLE_REFRESH_TOKEN en el DEPLOY).
-  const shareRes = await fetch(`https://www.googleapis.com/drive/v3/files/${spreadsheetId}/permissions`, {
+  const shareRes = await googleFetch(`https://www.googleapis.com/drive/v3/files/${spreadsheetId}/permissions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ role: "writer", type: "anyone" }),
