@@ -518,7 +518,7 @@ async function createLongListSheet(title, candidates) {
   const values = [
     ["", "", "", "", ""],
     [title, "", "", "", ""],
-    ["", "CANDIDATOS PRESELECCIONADOS CLIENTE", "", "", ""],
+    ["", "CANDIDATOS PRESELECCIONADOS", "", "", ""],
     ["", "", "NOMBRE", "RESUMEN", "STATUS CANDIDATO"],
     ...candidates.map((c, i) => ["", i + 1, c.name, c.resumen, ""]),
   ];
