@@ -112,7 +112,11 @@ async function listOpenJobs() {
   // con este token, así que traemos todos los procesos (paginando) y
   // filtramos nosotros mismos por status === "open".
   const all = await ttFetchAllPages("/jobs");
-  const openOnes = all.filter((j) => j.attributes && j.attributes.status === "open");
+  // Incluimos también las vacantes "unlisted" (Ocultas en Teamtailor), pero
+  // no las archivadas ni los borradores.
+  const openOnes = all.filter(
+    (j) => j.attributes && (j.attributes.status === "open" || j.attributes.status === "unlisted")
+  );
   const jobs = openOnes.map((j) => ({
     id: j.id,
     title: j.attributes["internal-name"] || j.attributes.title,
