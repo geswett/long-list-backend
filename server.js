@@ -111,7 +111,23 @@ async function listOpenJobs() {
   // El filtro de Teamtailor filter[status]=open no anduvo de forma confiable
   // con este token, así que traemos todos los procesos (paginando) y
   // filtramos nosotros mismos por status === "open".
-  const all = await ttFetchAllPages("/jobs");
+  const base = await ttFetchAllPages("/jobs");
+
+  // El listado sin filtro de Teamtailor puede no traer las vacantes Ocultas
+  // (unlisted), así que las pedimos aparte y las unimos sin duplicar.
+  let hidden = [];
+  for (const status of ["unlisted", "hidden"]) {
+    try {
+      hidden = hidden.concat(await ttFetchAllPages(`/jobs?filter[status]=${status}`));
+    } catch (e) {
+      console.log(`[jobs] filter[status]=${status} falló: ${e.message}`);
+    }
+  }
+  const seen = new Set();
+  const all = [...base, ...hidden].filter((j) => (seen.has(j.id) ? false : (seen.add(j.id), true)));
+  console.log(
+    `[jobs] statuses vistos: ${JSON.stringify([...new Set(all.map((j) => j.attributes && j.attributes.status))])}, ocultas extra: ${hidden.length}`
+  );
   // Incluimos también las vacantes "unlisted" (Ocultas en Teamtailor), pero
   // no las archivadas ni los borradores.
   const openOnes = all.filter(
